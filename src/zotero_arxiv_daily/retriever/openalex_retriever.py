@@ -400,6 +400,7 @@ class OpenAlexRetriever(BaseRetriever):
             self.required_keywords,
         ):
             return None
+            
 
         if self.exclude_keywords and contains_any_keyword(
             text_for_filter,
@@ -409,11 +410,15 @@ class OpenAlexRetriever(BaseRetriever):
 
         journal = extract_journal(raw_paper)
 
-        if self.include_journals:
-            journal_key = (journal or "").lower()
-
-            if journal_key not in self.include_journals:
-                return None
+        journal_tier = get_journal_tier(
+            journal,
+            self.tier1_journals,
+            self.tier2_journals,
+            self.tier3_journals,
+        )
+        
+        if self.exclude_unknown_journals and journal_tier == "unknown":
+            return None
 
         authors = extract_authors(raw_paper)
         affiliations = extract_institutions(raw_paper)
