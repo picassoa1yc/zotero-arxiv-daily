@@ -383,8 +383,8 @@ class OpenAlexRetriever(BaseRetriever):
         logger.info(f"Retrieved {len(raw_papers)} unique OpenAlex works.")
         return raw_papers
         
-    if not is_journal_article(raw_paper):
-        return None
+        if not is_journal_article(raw_paper):
+            return None
     
     def convert_to_paper(self, raw_paper: dict[str, Any]) -> Paper | None:
         title = raw_paper.get("display_name") or ""
