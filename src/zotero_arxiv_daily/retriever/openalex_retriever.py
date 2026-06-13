@@ -25,34 +25,37 @@ def _cfg_get(config: Any, key: str, default: Any = None) -> Any:
         return getattr(config, key, default)
 
 
+def _cfg_bool(config: Any, key: str, default: bool = False) -> bool:
+    value = _cfg_get(config, key, default)
+
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, str):
+        return value.lower().strip() in {"true", "1", "yes", "y"}
+
+    return bool(value)
+
+
 def _cfg_list(config: Any, key: str, default: list[Any] | None = None) -> list[Any]:
     value = _cfg_get(config, key, default or [])
 
     if value is None:
         return []
 
-    # OmegaConf ListConfig or normal list/tuple
+    # Compatible with OmegaConf ListConfig and normal list/tuple.
     if not isinstance(value, str):
         try:
             return list(value)
         except TypeError:
             pass
 
-    # A single string value
     return [value]
 
 
-def restore_openalex_abstract(abstract_inverted_index: dict[str, list[int]] | None) -> str:
-    """
-    OpenAlex stores abstracts as an inverted index:
-    {
-        "This": [0],
-        "paper": [1],
-        ...
-    }
-
-    This function restores it into plain text.
-    """
+def restore_openalex_abstract(
+    abstract_inverted_index: dict[str, list[int]] | None,
+) -> str:
     if not abstract_inverted_index:
         return ""
 
@@ -71,7 +74,7 @@ def _unique_keep_order(items: list[str]) -> list[str]:
     result = []
 
     for item in items:
-        item = item.strip()
+        item = str(item).strip()
 
         if not item:
             continue
@@ -113,11 +116,35 @@ def extract_institutions(work: dict[str, Any]) -> list[str]:
     return _unique_keep_order(institutions)
 
 
-def extract_journal(work: dict[str, Any]) -> str | None:
-    primary_location = work.get("primary_location") or {}
-    source = primary_location.get("source") or {}
+def get_primary_location(work: dict[str, Any]) -> dict[str, Any]:
+    return work.get("primary_location") or {}
 
-    journal = source.get("display_name")
+
+def get_primary_source(work: dict[str, Any]) -> dict[str, Any]:
+    primary_location = get_primary_location(work)
+    return primary_location.get("source") or {}
+
+
+def is_journal_article(work: dict[str, Any]) -> bool:
+    primary_location = get_primary_location(work)
+    primary_source = get_primary_source(work)
+
+    source_type = primary_source.get("type")
+    version = primary_location.get("version")
+
+    if source_type != "journal":
+        return False
+
+    # OpenAlex often marks preprints as submittedVersion.
+    if version == "submittedVersion":
+        return False
+
+    return True
+
+
+def extract_journal(work: dict[str, Any]) -> str | None:
+    primary_source = get_primary_source(work)
+    journal = primary_source.get("display_name")
 
     if journal:
         return journal
@@ -133,10 +160,8 @@ def extract_journal(work: dict[str, Any]) -> str | None:
 
 
 def extract_publisher(work: dict[str, Any]) -> str | None:
-    primary_location = work.get("primary_location") or {}
-    source = primary_location.get("source") or {}
-
-    publisher = source.get("host_organization_name")
+    primary_source = get_primary_source(work)
+    publisher = primary_source.get("host_organization_name")
 
     if publisher:
         return publisher
@@ -145,8 +170,7 @@ def extract_publisher(work: dict[str, Any]) -> str | None:
 
 
 def extract_pdf_url(work: dict[str, Any]) -> str | None:
-    primary_location = work.get("primary_location") or {}
-
+    primary_location = get_primary_location(work)
     pdf_url = primary_location.get("pdf_url")
 
     if pdf_url:
@@ -167,7 +191,7 @@ def extract_landing_url(work: dict[str, Any]) -> str:
     if doi:
         return doi
 
-    primary_location = work.get("primary_location") or {}
+    primary_location = get_primary_location(work)
     landing_page_url = primary_location.get("landing_page_url")
 
     if landing_page_url:
@@ -206,38 +230,26 @@ def normalize_identifier(work: dict[str, Any]) -> str:
 def contains_any_keyword(text: str, keywords: list[str]) -> bool:
     text_lower = text.lower()
     return any(keyword.lower() in text_lower for keyword in keywords)
-    
-def get_primary_location(work: dict) -> dict:
-    return work.get("primary_location") or {}
 
-
-def get_primary_source(work: dict) -> dict:
-    primary_location = get_primary_location(work)
-    return primary_location.get("source") or {}
-
-
-def is_journal_article(work: dict) -> bool:
-    primary_location = get_primary_location(work)
-    primary_source = get_primary_source(work)
-
-    source_type = primary_source.get("type")
-    version = primary_location.get("version")
-
-    if source_type != "journal":
-        return False
-
-    if version == "submittedVersion":
-        return False
-
-    return True
 
 def normalize_journal_name(name: str | None) -> str:
     if not name:
         return ""
-    return name.lower().replace("&", "and").strip()
+
+    return (
+        name.lower()
+        .replace("&", "and")
+        .replace("：", ":")
+        .strip()
+    )
 
 
-def get_journal_tier(journal: str | None, tier1: list[str], tier2: list[str], tier3: list[str]) -> str:
+def get_journal_tier(
+    journal: str | None,
+    tier1: list[str],
+    tier2: list[str],
+    tier3: list[str],
+) -> str:
     journal_key = normalize_journal_name(journal)
 
     tier1_set = {normalize_journal_name(j) for j in tier1}
@@ -255,13 +267,14 @@ def get_journal_tier(journal: str | None, tier1: list[str], tier2: list[str], ti
 
     return "unknown"
 
+
 @register_retriever("openalex")
 class OpenAlexRetriever(BaseRetriever):
     """
     Retrieve recent journal articles from OpenAlex.
 
-    This retriever is designed for geography / ecology / hydrology / remote sensing
-    paper recommendation, where arXiv coverage is often insufficient.
+    This retriever is designed for geography / ecology / hydrology /
+    remote sensing journal-paper recommendation.
     """
 
     def __init__(self, config):
@@ -276,13 +289,42 @@ class OpenAlexRetriever(BaseRetriever):
         self.required_keywords = [
             str(k) for k in _cfg_list(self.retriever_config, "required_keywords")
         ]
+        self.core_keywords = [
+            str(k) for k in _cfg_list(self.retriever_config, "core_keywords")
+        ]
         self.exclude_keywords = [
             str(k) for k in _cfg_list(self.retriever_config, "exclude_keywords")
         ]
         self.include_journals = [
-            str(j).lower()
+            normalize_journal_name(str(j))
             for j in _cfg_list(self.retriever_config, "include_journals")
         ]
+
+        self.tier1_journals = [
+            str(j) for j in _cfg_list(self.retriever_config, "tier1_journals")
+        ]
+        self.tier2_journals = [
+            str(j) for j in _cfg_list(self.retriever_config, "tier2_journals")
+        ]
+        self.tier3_journals = [
+            str(j) for j in _cfg_list(self.retriever_config, "tier3_journals")
+        ]
+
+        self.only_journal_articles = _cfg_bool(
+            self.retriever_config,
+            "only_journal_articles",
+            True,
+        )
+        self.exclude_unknown_journals = _cfg_bool(
+            self.retriever_config,
+            "exclude_unknown_journals",
+            True,
+        )
+        self.require_core_keyword_for_tier3 = _cfg_bool(
+            self.retriever_config,
+            "require_core_keyword_for_tier3",
+            True,
+        )
 
         if not self.queries:
             raise ValueError("source.openalex.queries must contain at least one query.")
@@ -303,7 +345,12 @@ class OpenAlexRetriever(BaseRetriever):
 
         return ",".join(filters)
 
-    def _request_openalex(self, query: str, from_date: str, to_date: str) -> list[dict[str, Any]]:
+    def _request_openalex(
+        self,
+        query: str,
+        from_date: str,
+        to_date: str,
+    ) -> list[dict[str, Any]]:
         params = {
             "search": query,
             "filter": self._build_filters(from_date, to_date),
@@ -382,11 +429,11 @@ class OpenAlexRetriever(BaseRetriever):
 
         logger.info(f"Retrieved {len(raw_papers)} unique OpenAlex works.")
         return raw_papers
-        
-        if not is_journal_article(raw_paper):
-            return None
-    
+
     def convert_to_paper(self, raw_paper: dict[str, Any]) -> Paper | None:
+        if self.only_journal_articles and not is_journal_article(raw_paper):
+            return None
+
         title = raw_paper.get("display_name") or ""
         abstract = restore_openalex_abstract(raw_paper.get("abstract_inverted_index"))
 
@@ -400,7 +447,6 @@ class OpenAlexRetriever(BaseRetriever):
             self.required_keywords,
         ):
             return None
-            
 
         if self.exclude_keywords and contains_any_keyword(
             text_for_filter,
@@ -409,20 +455,35 @@ class OpenAlexRetriever(BaseRetriever):
             return None
 
         journal = extract_journal(raw_paper)
-
         journal_tier = get_journal_tier(
             journal,
             self.tier1_journals,
             self.tier2_journals,
             self.tier3_journals,
         )
-        
+
+        if self.include_journals:
+            journal_key = normalize_journal_name(journal)
+            if journal_key not in self.include_journals:
+                return None
+
         if self.exclude_unknown_journals and journal_tier == "unknown":
+            return None
+
+        if (
+            journal_tier == "tier3"
+            and self.require_core_keyword_for_tier3
+            and self.core_keywords
+            and not contains_any_keyword(text_for_filter, self.core_keywords)
+        ):
             return None
 
         authors = extract_authors(raw_paper)
         affiliations = extract_institutions(raw_paper)
         topics = extract_topics(raw_paper)
+
+        if journal_tier:
+            topics = [f"Journal tier: {journal_tier}"] + topics
 
         doi = raw_paper.get("doi")
         url = extract_landing_url(raw_paper)
