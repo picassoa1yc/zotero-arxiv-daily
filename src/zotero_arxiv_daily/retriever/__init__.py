@@ -1,2 +1,7 @@
 from .base import get_retriever_cls
-from . import arxiv_retriever, biorxiv_retriever, medrxiv_retriever
+
+# Import retrievers here so that @register_retriever decorators are executed.
+from . import arxiv_retriever
+from . import biorxiv_retriever
+from . import medrxiv_retriever
+from . import openalex_retriever
