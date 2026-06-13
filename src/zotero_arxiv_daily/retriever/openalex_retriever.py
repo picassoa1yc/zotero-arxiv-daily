@@ -31,9 +31,14 @@ def _cfg_list(config: Any, key: str, default: list[Any] | None = None) -> list[A
     if value is None:
         return []
 
-    if isinstance(value, (list, tuple)):
-        return list(value)
+    # OmegaConf ListConfig or normal list/tuple
+    if not isinstance(value, str):
+        try:
+            return list(value)
+        except TypeError:
+            pass
 
+    # A single string value
     return [value]
 
 
