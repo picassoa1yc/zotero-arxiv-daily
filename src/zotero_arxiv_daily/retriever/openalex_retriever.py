@@ -206,7 +206,54 @@ def normalize_identifier(work: dict[str, Any]) -> str:
 def contains_any_keyword(text: str, keywords: list[str]) -> bool:
     text_lower = text.lower()
     return any(keyword.lower() in text_lower for keyword in keywords)
+    
+def get_primary_location(work: dict) -> dict:
+    return work.get("primary_location") or {}
 
+
+def get_primary_source(work: dict) -> dict:
+    primary_location = get_primary_location(work)
+    return primary_location.get("source") or {}
+
+
+def is_journal_article(work: dict) -> bool:
+    primary_location = get_primary_location(work)
+    primary_source = get_primary_source(work)
+
+    source_type = primary_source.get("type")
+    version = primary_location.get("version")
+
+    if source_type != "journal":
+        return False
+
+    if version == "submittedVersion":
+        return False
+
+    return True
+
+def normalize_journal_name(name: str | None) -> str:
+    if not name:
+        return ""
+    return name.lower().replace("&", "and").strip()
+
+
+def get_journal_tier(journal: str | None, tier1: list[str], tier2: list[str], tier3: list[str]) -> str:
+    journal_key = normalize_journal_name(journal)
+
+    tier1_set = {normalize_journal_name(j) for j in tier1}
+    tier2_set = {normalize_journal_name(j) for j in tier2}
+    tier3_set = {normalize_journal_name(j) for j in tier3}
+
+    if journal_key in tier1_set:
+        return "tier1"
+
+    if journal_key in tier2_set:
+        return "tier2"
+
+    if journal_key in tier3_set:
+        return "tier3"
+
+    return "unknown"
 
 @register_retriever("openalex")
 class OpenAlexRetriever(BaseRetriever):
@@ -335,7 +382,10 @@ class OpenAlexRetriever(BaseRetriever):
 
         logger.info(f"Retrieved {len(raw_papers)} unique OpenAlex works.")
         return raw_papers
-
+        
+    if not is_journal_article(raw_paper):
+        return None
+    
     def convert_to_paper(self, raw_paper: dict[str, Any]) -> Paper | None:
         title = raw_paper.get("display_name") or ""
         abstract = restore_openalex_abstract(raw_paper.get("abstract_inverted_index"))
