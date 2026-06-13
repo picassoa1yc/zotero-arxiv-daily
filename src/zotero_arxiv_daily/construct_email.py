@@ -1,131 +1,179 @@
-from .protocol import Paper
+from __future__ import annotations
+
 import math
+from html import escape
+
+from .protocol import Paper
 
 
 framework = """
-<!DOCTYPE HTML>
 <html>
-<head>
-  <style>
-    .star-wrapper {
-      font-size: 1.3em; /* 调整星星大小 */
-      line-height: 1; /* 确保垂直对齐 */
-      display: inline-flex;
-      align-items: center; /* 保持对齐 */
-    }
-    .half-star {
-      display: inline-block;
-      width: 0.5em; /* 半颗星的宽度 */
-      overflow: hidden;
-      white-space: nowrap;
-      vertical-align: middle;
-    }
-    .full-star {
-      vertical-align: middle;
-    }
-  </style>
-</head>
-<body>
+  <body style="font-family: Arial, sans-serif; line-height: 1.55;">
+    <h2>Daily Paper Recommendation</h2>
 
-<div>
     __CONTENT__
-</div>
 
-<br><br>
-<div>
-To unsubscribe, remove your email in your Github Action setting.
-</div>
-
-</body>
+    <hr>
+    <p style="color: #777; font-size: 12px;">
+      To unsubscribe, remove your email in your GitHub Action settings.
+    </p>
+  </body>
 </html>
 """
 
-def get_empty_html():
-  block_template = """
-  <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-family: Arial, sans-serif; border: 1px solid #ddd; border-radius: 8px; padding: 16px; background-color: #f9f9f9;">
-  <tr>
-    <td style="font-size: 20px; font-weight: bold; color: #333;">
-        No Papers Today. Take a Rest!
-    </td>
-  </tr>
-  </table>
-  """
-  return block_template
 
-def get_block_html(title:str, authors:str, rate:str, tldr:str, pdf_url:str, affiliations:str=None):
-    block_template = """
-    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="font-family: Arial, sans-serif; border: 1px solid #ddd; border-radius: 8px; padding: 16px; background-color: #f9f9f9;">
-    <tr>
-        <td style="font-size: 20px; font-weight: bold; color: #333;">
-            {title}
-        </td>
-    </tr>
-    <tr>
-        <td style="font-size: 14px; color: #666; padding: 8px 0;">
-            {authors}
-            <br>
-            <i>{affiliations}</i>
-        </td>
-    </tr>
-    <tr>
-        <td style="font-size: 14px; color: #333; padding: 8px 0;">
-            <strong>Relevance:</strong> {rate}
-        </td>
-    </tr>
-    <tr>
-        <td style="font-size: 14px; color: #333; padding: 8px 0;">
-            <strong>TLDR:</strong> {tldr}
-        </td>
-    </tr>
+def _safe(value: object | None) -> str:
+    if value is None:
+        return ""
+    return escape(str(value))
 
-    <tr>
-        <td style="padding: 8px 0;">
-            <a href="{pdf_url}" style="display: inline-block; text-decoration: none; font-size: 14px; font-weight: bold; color: #fff; background-color: #d9534f; padding: 8px 16px; border-radius: 4px;">PDF</a>
-        </td>
-    </tr>
-</table>
-"""
-    return block_template.format(title=title, authors=authors,rate=rate, tldr=tldr, pdf_url=pdf_url, affiliations=affiliations)
 
-def get_stars(score:float):
-    full_star = '<span class="full-star">⭐</span>'
-    half_star = '<span class="half-star">⭐</span>'
+def _format_authors(authors: list[str]) -> str:
+    if not authors:
+        return "Unknown Authors"
+
+    if len(authors) <= 5:
+        return ", ".join(authors)
+
+    return ", ".join(authors[:3] + ["..."] + authors[-2:])
+
+
+def _format_list(items: list[str] | None, max_items: int = 5, empty: str = "Not available") -> str:
+    if not items:
+        return empty
+
+    shown = items[:max_items]
+    result = ", ".join(shown)
+
+    if len(items) > max_items:
+        result += ", ..."
+
+    return result
+
+
+def get_empty_html() -> str:
+    return """
+    <p>No Papers Today. Take a Rest!</p>
+    """
+
+
+def get_stars(score: float) -> str:
+    full_star = "⭐"
+    half_star = "⭐"
     low = 6
     high = 8
+
     if score <= low:
-        return ''
-    elif score >= high:
+        return ""
+
+    if score >= high:
         return full_star * 5
-    else:
-        interval = (high-low) / 10
-        star_num = math.ceil((score-low) / interval)
-        full_star_num = int(star_num/2)
-        half_star_num = star_num - full_star_num * 2
-        return '<div class="star-wrapper">'+full_star * full_star_num + half_star * half_star_num + '</div>'
+
+    interval = (high - low) / 10
+    star_num = math.ceil((score - low) / interval)
+    full_star_num = int(star_num / 2)
+    half_star_num = star_num - full_star_num * 2
+
+    return full_star * full_star_num + half_star * half_star_num
 
 
-def render_email(papers:list[Paper]) -> str:
-    parts = []
-    if len(papers) == 0 :
-        return framework.replace('__CONTENT__', get_empty_html())
-    
-    for p in papers:
-        #rate = get_stars(p.score)
-        rate = round(p.score, 1) if p.score is not None else 'Unknown'
-        author_list = [a for a in p.authors]
-        num_authors = len(author_list)
-        if num_authors <= 5:
-            authors = ', '.join(author_list)
-        else:
-            authors = ', '.join(author_list[:3] + ['...'] + author_list[-2:])
-        if p.affiliations is not None:
-            affiliations = p.affiliations[:5]
-            affiliations = ', '.join(affiliations)
-            if len(p.affiliations) > 5:
-                affiliations += ', ...'
-        else:
-            affiliations = 'Unknown Affiliation'
-        parts.append(get_block_html(p.title, authors, rate, p.tldr, p.pdf_url, affiliations))
+def _link_html(label: str, url: str | None) -> str:
+    if not url:
+        return ""
 
-    content = '<br>' + '</br><br>'.join(parts) + '</br>'
-    return framework.replace('__CONTENT__', content)
+    return f'<a href="{_safe(url)}">{_safe(label)}</a>'
+
+
+def get_block_html(paper: Paper) -> str:
+    rate = round(paper.score, 1) if paper.score is not None else "Unknown"
+    stars = get_stars(paper.score) if paper.score is not None else ""
+
+    authors = _format_authors(paper.authors)
+    affiliations = _format_list(paper.affiliations, max_items=5, empty="Not available")
+    topics = _format_list(paper.topics, max_items=5, empty="Not available")
+
+    journal = paper.journal or "Preprint / Unknown Journal"
+    publication_date = paper.publication_date or "Unknown date"
+    doi = paper.doi or "Not available"
+
+    tldr = paper.tldr or paper.abstract or "No TLDR available."
+
+    links = []
+
+    if paper.url:
+        links.append(_link_html("Landing Page", paper.url))
+
+    if paper.doi:
+        links.append(_link_html("DOI", paper.doi))
+
+    if paper.pdf_url:
+        links.append(_link_html("PDF", paper.pdf_url))
+
+    links_html = " | ".join([link for link in links if link])
+
+    if not links_html:
+        links_html = "No link available"
+
+    return f"""
+    <div style="
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin: 16px 0;
+      background: #fff;
+    ">
+      <h3 style="margin: 0 0 8px 0;">
+        {_safe(paper.title)}
+      </h3>
+
+      <p style="margin: 4px 0;">
+        <b>Authors:</b> {_safe(authors)}
+      </p>
+
+      <p style="margin: 4px 0;">
+        <b>Journal:</b> {_safe(journal)}
+      </p>
+
+      <p style="margin: 4px 0;">
+        <b>Published:</b> {_safe(publication_date)}
+      </p>
+
+      <p style="margin: 4px 0;">
+        <b>DOI:</b> {_safe(doi)}
+      </p>
+
+      <p style="margin: 4px 0;">
+        <b>Affiliations:</b> {_safe(affiliations)}
+      </p>
+
+      <p style="margin: 4px 0;">
+        <b>Topics:</b> {_safe(topics)}
+      </p>
+
+      <p style="margin: 4px 0;">
+        <b>Source:</b> {_safe(paper.source)}
+      </p>
+
+      <p style="margin: 4px 0;">
+        <b>Relevance:</b> {_safe(rate)} {_safe(stars)}
+      </p>
+
+      <p style="margin: 8px 0;">
+        <b>TLDR:</b> {_safe(tldr)}
+      </p>
+
+      <p style="margin: 8px 0;">
+        <b>Links:</b> {links_html}
+      </p>
+    </div>
+    """
+
+
+def render_email(papers: list[Paper]) -> str:
+    if len(papers) == 0:
+        return framework.replace("__CONTENT__", get_empty_html())
+
+    parts = [get_block_html(p) for p in papers]
+    content = "\n".join(parts)
+
+    return framework.replace("__CONTENT__", content)
