@@ -242,7 +242,49 @@ def normalize_journal_name(name: str | None) -> str:
         .replace("：", ":")
         .strip()
     )
+    
+def passes_geo_drought_scope(text: str) -> bool:
+    text_lower = text.lower()
 
+    drought_terms = [
+        "drought",
+        "dry-hot",
+        "dry hot",
+        "hot drought",
+        "flash drought",
+        "compound drought",
+        "compound dry",
+        "water stress",
+        "plant water stress",
+        "soil moisture deficit",
+    ]
+
+    domain_terms = [
+        "vegetation",
+        "ecosystem",
+        "plant",
+        "forest",
+        "grassland",
+        "cropland",
+        "savanna",
+        "hydrological",
+        "agricultural",
+        "meteorological",
+        "soil moisture",
+        "remote sensing",
+        "ndvi",
+        "sif",
+        "solar-induced chlorophyll fluorescence",
+        "vod",
+        "vegetation optical depth",
+        "gpp",
+        "carbon sink",
+    ]
+
+    has_drought = any(term in text_lower for term in drought_terms)
+    has_domain = any(term in text_lower for term in domain_terms)
+
+    return has_drought and has_domain
 
 def get_journal_tier(
     journal: str | None,
@@ -441,6 +483,9 @@ class OpenAlexRetriever(BaseRetriever):
             return None
 
         text_for_filter = f"{title}\n{abstract}"
+        
+        if not passes_geo_drought_scope(text_for_filter):
+            return None
 
         if self.required_keywords and not contains_any_keyword(
             text_for_filter,
