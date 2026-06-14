@@ -93,31 +93,82 @@ class Executor:
     def run(self):
         corpus = self.fetch_zotero_corpus()
         corpus = self.filter_corpus(corpus)
+
         if len(corpus) == 0:
-            logger.error(f"No zotero papers found. Please check your zotero settings:\n{self.config.zotero}")
+            logger.error(
+                f"No zotero papers found. Please check your zotero settings:\n"
+                f"{self.config.zotero}"
+            )
             return
+
         all_papers = []
+
         for source, retriever in self.retrievers.items():
             logger.info(f"Retrieving {source} papers...")
             papers = retriever.retrieve_papers()
+
             if len(papers) == 0:
                 logger.info(f"No {source} papers found")
                 continue
+
             logger.info(f"Retrieved {len(papers)} {source} papers")
             all_papers.extend(papers)
+
         logger.info(f"Total {len(all_papers)} papers retrieved from all sources")
+
         reranked_papers = []
+
         if len(all_papers) > 0:
             logger.info("Reranking papers...")
             reranked_papers = self.reranker.rerank(all_papers, corpus)
+
+            # ------------------------------------------------------------
+            # Filter papers by minimum relevance score.
+            # This prevents low-relevance papers, such as unrelated Nature
+            # Communications materials-science papers, from being pushed.
+            # ------------------------------------------------------------
+            min_relevance = None
+
+            if "min_relevance" in self.config.executor:
+                min_relevance = self.config.executor.min_relevance
+
+            if min_relevance is not None:
+                min_relevance = float(min_relevance)
+                before_count = len(reranked_papers)
+
+                reranked_papers = [
+                    paper
+                    for paper in reranked_papers
+                    if paper.score is not None and float(paper.score) >= min_relevance
+                ]
+
+                logger.info(
+                    f"Filtered papers by min_relevance >= {min_relevance}: "
+                    f"{before_count} -> {len(reranked_papers)}"
+                )
+
+            # ------------------------------------------------------------
+            # Only keep top N papers after relevance filtering.
+            # ------------------------------------------------------------
             reranked_papers = reranked_papers[:self.config.executor.max_paper_num]
+
+            if len(reranked_papers) == 0 and not self.config.executor.send_empty:
+                logger.info(
+                    "No papers passed the relevance threshold. "
+                    "No email will be sent."
+                )
+                return
+
             logger.info("Generating TLDR and affiliations...")
+
             for p in tqdm(reranked_papers):
                 p.generate_tldr(self.openai_client, self.config.llm)
                 p.generate_affiliations(self.openai_client, self.config.llm)
+
         elif not self.config.executor.send_empty:
             logger.info("No new papers found. No email will be sent.")
             return
+
         logger.info("Sending email...")
         email_content = render_email(reranked_papers)
         send_email(self.config, email_content)
