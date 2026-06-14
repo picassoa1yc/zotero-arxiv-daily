@@ -438,9 +438,6 @@ class OpenAlexRetriever(BaseRetriever):
 
         queries = self.queries
 
-        if self.config.executor.debug:
-            queries = queries[:3]
-
         raw_papers: list[dict[str, Any]] = []
         seen_ids = set()
 
@@ -466,8 +463,6 @@ class OpenAlexRetriever(BaseRetriever):
 
             sleep(1)
 
-        if self.config.executor.debug:
-            raw_papers = raw_papers[:30]
 
         logger.info(f"Retrieved {len(raw_papers)} unique OpenAlex works.")
         return raw_papers
