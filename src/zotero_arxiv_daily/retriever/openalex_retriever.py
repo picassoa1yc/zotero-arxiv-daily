@@ -326,6 +326,10 @@ class OpenAlexRetriever(BaseRetriever):
         self.per_query = int(_cfg_get(self.retriever_config, "per_query", 50))
         self.max_results = int(_cfg_get(self.retriever_config, "max_results", 200))
         self.mailto = _cfg_get(self.retriever_config, "mailto", None)
+        self.api_key = _cfg_get(self.retriever_config, "api_key", None)
+        self.request_delay = float(_cfg_get(self.retriever_config, "request_delay", 3))
+        self.retry_num = int(_cfg_get(self.retriever_config, "retry_num", 3))
+        self.retry_delay = float(_cfg_get(self.retriever_config, "retry_delay", 20))
 
         self.queries = [str(q) for q in _cfg_list(self.retriever_config, "queries")]
         self.required_keywords = [
@@ -396,35 +400,70 @@ class OpenAlexRetriever(BaseRetriever):
         params = {
             "search": query,
             "filter": self._build_filters(from_date, to_date),
-            "per-page": min(self.per_query, 200),
+            "per-page": min(self.per_query, 100),
             "sort": "publication_date:desc",
         }
 
         if self.mailto:
             params["mailto"] = self.mailto
 
-        retry_num = 5
-        delay_time = 10
+        if self.api_key:
+            params["api_key"] = self.api_key
 
-        for i in range(retry_num):
+        headers = {
+            "User-Agent": f"zotero-arxiv-daily-openalex ({self.mailto or 'no-email'})"
+        }
+
+        for i in range(self.retry_num):
             try:
                 response = requests.get(
                     OPENALEX_WORKS_API,
                     params=params,
+                    headers=headers,
                     timeout=REQUEST_TIMEOUT,
                 )
+
                 response.raise_for_status()
                 data = response.json()
                 return data.get("results", []) or []
-            except Exception as exc:
-                if i == retry_num - 1:
-                    raise exc
+
+            except requests.exceptions.HTTPError as exc:
+                status_code = None
+
+                if exc.response is not None:
+                    status_code = exc.response.status_code
+
+                # 429 / 500 / 502 / 503 / 504 are worth retrying, but should not
+                # crash the whole workflow if they keep failing.
+                if status_code in {429, 500, 502, 503, 504}:
+                    logger.warning(
+                        f"OpenAlex query={query!r} failed with HTTP {status_code}. "
+                        f"Attempt {i + 1}/{self.retry_num}. "
+                        f"Retry in {self.retry_delay} seconds."
+                    )
+
+                    sleep(self.retry_delay * (i + 1))
+                    continue
 
                 logger.warning(
-                    f"Failed to retrieve OpenAlex papers for query={query!r}: {exc}. "
-                    f"Retry in {delay_time} seconds."
+                    f"OpenAlex query={query!r} failed with non-retryable HTTP error: "
+                    f"{exc}. This query will be skipped."
                 )
-                sleep(delay_time)
+                return []
+
+            except Exception as exc:
+                logger.warning(
+                    f"OpenAlex query={query!r} failed: {exc}. "
+                    f"Attempt {i + 1}/{self.retry_num}. "
+                    f"Retry in {self.retry_delay} seconds."
+                )
+
+                sleep(self.retry_delay * (i + 1))
+
+        logger.warning(
+            f"OpenAlex query={query!r} failed after {self.retry_num} attempts. "
+            f"This query will be skipped."
+        )
 
         return []
 
